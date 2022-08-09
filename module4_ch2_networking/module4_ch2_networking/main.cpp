@@ -113,6 +113,15 @@ void ServerConnection(string servername)
                     //<< "was received from " << (char*)event.peer->data
                     //<< " on channel " << event.channelID << endl;
                 cout << (char*)event.packet->data << endl;
+
+                {
+                    /* Echo received message back to everyone else */
+                    ENetPacket* packet = enet_packet_create((char*)event.packet->data,
+                        strlen((char*)event.packet->data) + 1,
+                        ENET_PACKET_FLAG_RELIABLE);
+
+                    enet_host_broadcast(server, 0, packet);
+                }
                 /* Clean up the packet now that we're done using it. */
                 enet_packet_destroy(event.packet);
 
@@ -209,6 +218,8 @@ void ClientConnection(string username)
             }
         }
     }
+
+
 }
 
 void GetServerInput(string messenger)
@@ -216,14 +227,16 @@ void GetServerInput(string messenger)
     stopServer = false;
     while (true)
     {
-        string text;
+        //string text;
+        char text[256];
         cout << ">";// << messenger << ": ";
 
-        cin >> text;
-        cin.ignore( (numeric_limits<streamsize>::max)(), '\n');
+        //cin >> text;
+        cin.getline(text, 256, '\n');
+        //cin.ignore( (numeric_limits<streamsize>::max)(), '\n');
 
         lock_guard<mutex> Guard(m);
-        if (text == "!e")
+        if (text[0] == '~')
         {
             stopServer = true;
             break;
@@ -232,7 +245,7 @@ void GetServerInput(string messenger)
 
         //cout << "--Server Repeat: " << s_packet << endl;
 
-        text = "";
+        //text = "";
     }
 }
 
@@ -241,14 +254,16 @@ void GetClientInput(string messenger)
     stopClient = false;
     while (true)
     {
-        string text;
+        //string text;
+        char text[256];
         cout << ">";// << messenger << ": ";
 
-        cin >> text;
-        cin.ignore((numeric_limits<streamsize>::max)(), '\n');
+        //cin >> text;
+        cin.getline(text, 256);
+        //cin.ignore((numeric_limits<streamsize>::max)(), '\n');
 
         lock_guard<mutex> Guard(m);
-        if (text == "!e")
+        if (text[0] == '~')
         {
             stopClient = true;
             break;
@@ -257,7 +272,7 @@ void GetClientInput(string messenger)
         
         //cout << "--Client Repeat: " << c_packet << endl;
         
-        text = "";
+        //text = "";
     }
 }
 
@@ -271,8 +286,6 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
     atexit(enet_deinitialize);
-
-
     
     cout << "1) Create Server " << endl;
     cout << "2) Create Client " << endl;
@@ -303,8 +316,6 @@ int main(int argc, char** argv)
         cout << "Enter username: ";
         cin >> username;
         cin.ignore((numeric_limits<streamsize>::max)(), '\n');
-
-        //cout << endl;
 
         if (!CreateClient())
         {
