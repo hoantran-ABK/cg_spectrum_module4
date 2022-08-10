@@ -10,12 +10,20 @@ ENetPeer* Peer = nullptr;
 bool IsServer = false;
 thread* PacketThread = nullptr;
 
+int serverValue = 0;
+bool clientWaitingForResponse = false;
+
+bool s_guessWasCorrect = false;
+bool c_guessWasCorrect = false;
+
 enum PacketHeaderTypes
 {
     PHT_Invalid = 0,
     PHT_IsDead,
     PHT_Position,
-    PHT_Count
+    PHT_Count,
+    PHT_Guess,
+    PHT_Result
 };
 
 struct GamePacket
@@ -45,6 +53,40 @@ struct PositionPacket : public GamePacket
     int playerId = 0;
     int x = 0;
     int y = 0;
+};
+
+struct GuessPacket : public GamePacket
+{
+    GuessPacket()
+    {
+        Type = PHT_Guess;
+    }
+
+    GuessPacket(int g)
+    {
+        Type = PHT_Guess;
+        this->guess = g;
+    }
+
+    int guess = 0;
+};
+
+struct ResultPacket : public GamePacket
+{
+    ResultPacket()
+    {
+        Type = PHT_Result;
+    }
+
+    ResultPacket(bool c)//, int r)
+    {
+        Type = PHT_Result;
+        this->isCorrect = c;
+        //this->result = r;
+    }
+
+    bool isCorrect = false;
+    //int result = 0;
 };
 
 //can pass in a peer connection if wanting to limit
@@ -101,6 +143,56 @@ void HandleReceivePacket(const ENetEvent& event)
                 cout << response << endl;
             }
         }
+
+        if (RecGamePacket->Type == PHT_Guess)
+        {
+            // handle guess, implied to be client->server direction packet (server is handling this packet now)
+            GuessPacket* clientGuess = (GuessPacket*)(event.packet->data);
+            if (clientGuess)
+            {
+                cout << "Client's Guess: " << clientGuess->guess << endl;
+
+                if (clientGuess->guess == serverValue)
+                {
+                    cout << "Client's Guess was right!" << endl;
+                    s_guessWasCorrect = true;
+                }
+                else
+                {
+                    cout << "Client's Guess was incorect..." << endl;
+                    s_guessWasCorrect = false;
+                }
+            }
+        }
+
+        if (RecGamePacket->Type == PHT_Result)
+        {
+            // handle results returned, implied to be server->client direction (client is handling this packet now)
+            // ...
+            ResultPacket* serverResponse = (ResultPacket*)(event.packet->data);
+            if (serverResponse)
+            {
+                //cout << "Server's Response to my guess: " << serverResponse->isCorrect << endl;//<< ", " << serverResponse->result << endl;
+                
+                if (serverResponse->isCorrect)
+                {
+                    //cout << "Your guess was correct!" << serverValue << endl;
+                    c_guessWasCorrect = true;
+
+                }
+                else
+                {
+                    cout << "Your guess was incorrect. Please try again... " << endl;
+                    c_guessWasCorrect = false;
+                }
+            }
+            
+            // check if result is correct or not here
+
+            // make sure client is not looking for a response anymore after handling it
+            clientWaitingForResponse = false;
+        }
+
     }
     else
     {
@@ -134,6 +226,11 @@ void BroadcastIsDeadPacket()
 
 void ServerProcessPackets()
 {
+    srand(time(0));
+    int randomGen = rand() % 100;
+    serverValue = randomGen;
+    cout << "Random Server Number To Guess: " << serverValue << endl;
+
     while (1)
     {
         ENetEvent event;
@@ -152,6 +249,19 @@ void ServerProcessPackets()
                 break;
             case ENET_EVENT_TYPE_RECEIVE:
                 HandleReceivePacket(event);
+                // send actual response packet here?
+                {
+                    ResultPacket* resultPacket = new ResultPacket();
+                    resultPacket->isCorrect = s_guessWasCorrect;
+                    ENetPacket* packet = enet_packet_create(resultPacket,
+                        sizeof(ResultPacket),
+                        ENET_PACKET_FLAG_RELIABLE);
+
+                    enet_peer_send(event.peer, 0, packet);
+                    enet_host_flush(NetHost);
+
+                    enet_packet_destroy(packet);
+                }
                 break;
 
             case ENET_EVENT_TYPE_DISCONNECT:
@@ -166,6 +276,8 @@ void ServerProcessPackets()
 
 void ClientProcessPackets()
 {
+    clientWaitingForResponse = false;
+
     while (1)
     {
         ENetEvent event;
@@ -180,6 +292,42 @@ void ClientProcessPackets()
             case ENET_EVENT_TYPE_RECEIVE:
                 HandleReceivePacket(event);
                 break;
+            }
+        }
+
+        // check if a response needs to be received first
+        if (clientWaitingForResponse)
+        {
+            cout << "Waiting for response from server about my guess..." << endl;
+            continue;
+        }
+        else // if not waiting on a response
+        {
+            // asking for input OR end loop because the previous guess was correct
+            if (c_guessWasCorrect)
+            {
+                int ex;
+                cout << "Your guess was correct! Enter any key to continue" << endl;
+                cin >> ex;
+                break;
+            }
+            else
+            {
+                int clientGuess;
+                // get input as a guess
+                cout << "Enter a guess: ";
+                cin >> clientGuess;
+
+                GuessPacket* guessPacket = new GuessPacket();
+                guessPacket->guess = clientGuess;
+                ENetPacket* packet = enet_packet_create(guessPacket,
+                    sizeof(GuessPacket),
+                    ENET_PACKET_FLAG_RELIABLE);
+
+                enet_peer_send(Peer, 0, packet);
+                enet_host_flush(NetHost);
+
+                enet_packet_destroy(packet);
             }
         }
     }
